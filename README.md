@@ -1,247 +1,82 @@
-# Dental Appointment Management System
+# Dental Appointment System — LangGraph + Claude + PostgreSQL
 
-A conversational AI system for managing dental appointments, powered by LangGraph and Grok-4 (xAI). This project demonstrates a multi-agent architecture where specialized agents work together to handle different appointment-related tasks through natural language interactions.
+An AI assistant for a dental clinic's front desk. Staff type requests in plain English
+(*"Book patient 1000082 with Kevin Anderson on 2/9/2026 8:30"*) and the assistant
+checks, books, cancels and reschedules appointments in a **PostgreSQL** database.
 
-## Overview
+Based on [pik1989/Dental-Appointment-System-using-LangGraph](https://github.com/pik1989/Dental-Appointment-System-using-LangGraph),
+which used Grok-4 and stored data in a CSV file.
 
-This system provides a chat-based interface for patients and clinic staff to:
-- **Check available appointment slots** and doctor information
-- **Book new appointments** with preferred doctors
-- **Cancel existing appointments**
-- **Reschedule appointments** to different time slots
+## What I changed from the original
+| Original | This version |
+|---|---|
+| Data in a CSV file (pandas) | Data in **PostgreSQL**; edit it live in pgAdmin while the assistant runs |
+| Grok-4 (xAI) | **Claude** (Anthropic) via `langchain-anthropic` |
+| API key typed into `settings.py` | Secrets kept in a `.env` file (not committed) |
+| Whole file re-written on every change | Single-row `UPDATE`s inside **transactions** |
+| Two bookings for the same slot could both succeed | `WHERE is_available = TRUE` ensures only one wins |
+| A patient could be booked with two doctors at once | Booking and rescheduling refuse a patient's time clash |
+| No database rules | `UNIQUE` and `CHECK` constraints reject invalid rows |
 
-The system uses a supervisor agent that intelligently routes user requests to the appropriate specialized agent based on the detected intent, making it an excellent educational example of multi-agent AI systems.
-
-## Architecture
-
-### Multi-Agent Design
-
-The system follows a supervisor pattern where a central coordinator analyzes user messages and routes them to the most appropriate specialized agent:
-
+## How it works
 ```
-                    ┌──────────────┐
-                    │   Supervisor │ ← Intent classification & routing
-                    └──────┬───────┘
-                           │
-          ┌────────────────┼────────────────┐
-          │                │                │
-          ▼                ▼                ▼
-   ┌─────────────┐ ┌─────────────┐ ┌───────────────┐
-   │ Info Agent  │ │   Booking   │ │  Cancellation │
-   │             │ │    Agent    │ │    Agent      │
-   └─────────────┘ └─────────────┘ └───────────────┘
-          │
-          ▼
-   ┌───────────────┐
-   │   Reschedule  │
-   │    Agent      │
-   └───────────────┘
+You type a request → main.py → LangGraph agent (Claude)
+                                   ↓ chooses a tool
+                       dental_agent/tools/*.py → PostgreSQL
 ```
+Claude reads the request, calls one of 7 tools (find free slots, check a slot, list doctors,
+look up a patient, book, cancel, reschedule), reads the result, and replies.
 
-### Agent Responsibilities
-
-- **Supervisor**: Analyzes user input, classifies intent (get_info, book, cancel, reschedule, end), and routes to the appropriate agent
-- **Info Agent**: Handles queries about available slots, doctor schedules, and patient appointment lookups
-- **Booking Agent**: Collects booking details and creates new appointments
-- **Cancellation Agent**: Handles appointment cancellation requests
-- **Rescheduling Agent**: Manages moving appointments to different time slots
-
-### Technology Stack
-
-- **LangGraph**: Orchestrates the multi-agent workflow and state management
-- **LangChain**: Provides the LLM integration and tool framework
-- **Grok-4 (xAI)**: Powers the conversational AI capabilities
-- **Pandas**: Manages the CSV-based data storage
-- **Pydantic**: Handles structured data validation
-
-## Project Structure
-
+## Project structure
 ```
-dental_agent_project/
-├── main.py                          # Entry point - interactive CLI
-├── doctor_availability.csv          # Data store for appointments
-├── requirements.txt                 # Python dependencies
-├── dental_agent/
-│   ├── agent.py                     # Main agent definition & tools
-│   ├── config/
-│   │   └── settings.py              # Configuration & environment
-│   ├── models/
-│   │   └── state.py                 # State schema definitions
-│   ├── tools/
-│   │   ├── csv_reader.py            # Read operations (query tools)
-│   │   └── csv_writer.py            # Write operations (mutation tools)
-│   ├── agents/
-│   │   ├── supervisor.py            # Intent classification & routing
-│   │   ├── info_agent.py            # Information queries
-│   │   ├── booking_agent.py         # Appointment booking
-│   │   ├── cancellation_agent.py    # Appointment cancellation
-│   │   └── rescheduling_agent.py    # Appointment rescheduling
-│   └── workflows/
-│       └── graph.py                 # LangGraph workflow definition
+main.py                        # Interactive terminal chat
+dental_agent/
+  agent.py                     # Claude + tools + system prompt (LangGraph agent)
+  db.py                        # PostgreSQL connection (settings from .env)
+  config/settings.py           # Model name, API key from .env
+  tools/csv_reader.py          # Read tools  (SQL SELECTs)
+  tools/csv_writer.py          # Write tools (SQL UPDATEs in transactions)
+SQL/schema.sql                 # Creates the appointments table
+doctor_availability.csv        # Sample data (4,280 slots) to import
+test_tools.py                  # Tests every tool without the AI
 ```
 
-## Installation
-
-### Prerequisites
-
-- Python 3.10 or higher
-- An xAI API key (Grok-4 model)
-
-### Steps
-
-1. **Clone the repository** and navigate to the project directory:
+## Setup
+1. **Install PostgreSQL** (pgAdmin included) and create a database named `dental_db`.
+2. In pgAdmin → `dental_db` → **Query Tool**, run `SQL/schema.sql`.
+3. **Import the data:** right-click the `appointments` table → *Import/Export Data* →
+   choose `doctor_availability.csv`, format **csv**, **Header on**, and remove `id` from the columns.
+4. **Python environment:**
    ```bash
-   cd dental_agent_project
-   ```
-
-2. **Create a virtual environment** (recommended):
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install dependencies**:
-   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
-
-4. **Configure environment variables**:
-
-   Create a `.env` file in the project root with your xAI API key:
+5. **Create a `.env` file** next to `main.py`:
    ```
-   XAI_API_KEY=your_api_key_here
-   MODEL_NAME=grok-4
-   TEMPERATURE=0
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_NAME=dental_db
+   DB_USER=postgres
+   DB_PASSWORD=your_postgres_password
+   ANTHROPIC_API_KEY=your_anthropic_api_key
+   MODEL_NAME=claude-opus-5-5
+   ```
+6. **Test the database tools** (no AI needed):
+   ```bash
+   python test_tools.py
+   ```
+7. **Run the assistant:**
+   ```bash
+   python main.py
    ```
 
-   You can obtain an API key from [xAI Console](https://console.x.ai/).
+## Example requests
+- `Show available slots for an orthodontist`
+- `Book patient 1000082 with Kevin Anderson on 2/9/2026 8:30`
+- `What appointments does patient 1000082 have?`
+- `Reschedule patient 1000082 from 2/9/2026 8:30 to 2/9/2026 9:00 with Kevin Anderson`
+- `Cancel the appointment for patient 1000082 at 2/9/2026 9:00`
 
-## Usage
-
-### Running the System
-
-Start the interactive appointment management system:
-
-```bash
-python main.py
-```
-
-### Example Interactions
-
-**Check Available Slots:**
-```
-You: Show available slots for an orthodontist
-Agent: Here are the available orthodontist appointments:
-1. 5/10/2026 9:00 - Dr. Emily Johnson
-2. 5/10/2026 10:00 - Dr. Emily Johnson
-3. 5/12/2026 14:00 - Dr. Emily Johnson
-...
-```
-
-**Book an Appointment:**
-```
-You: Book patient 1000082 with Emily Johnson on 5/10/2026 9:00
-Agent: Let me check that slot first... The slot is available!
-I've booked the appointment:
-- Patient ID: 1000082
-- Doctor: Emily Johnson
-- Date/Time: 5/10/2026 9:00
-- Specialization: orthodontist
-```
-
-**Check Patient Appointments:**
-```
-You: What appointments does patient 1000048 have?
-Agent: Patient 1000048 has the following appointments:
-1. 5/8/2026 9:00 - Dr. John Doe (general_dentist)
-```
-
-**Cancel an Appointment:**
-```
-You: Cancel appointment for patient 1000082 at 5/10/2026 9:00
-Agent: I've cancelled the appointment for patient 1000082 on 5/10/2026 at 9:00.
-```
-
-**Reschedule an Appointment:**
-```
-You: Reschedule patient 1000082 from 5/10/2026 9:00 to 5/12/2026 10:00
-Agent: Let me verify the new slot is available... It's available!
-I've rescheduled the appointment:
-- Patient ID: 1000082
-- New Date/Time: 5/12/2026 10:00
-- Doctor: Emily Johnson
-```
-
-## Available Specializations
-
-The system supports the following dental specializations:
-- General Dentist
-- Oral Surgeon
-- Orthodontist
-- Cosmetic Dentist
-- Prosthodontist
-- Pediatric Dentist
-- Emergency Dentist
-
-## Data Model
-
-The appointment data is stored in `doctor_availability.csv` with the following structure:
-
-| Field | Description |
-|-------|-------------|
-| date_slot | Appointment date and time (M/D/YYYY H:MM) |
-| specialization | Type of dental specialist |
-| doctor_name | Name of the dentist |
-| is_available | Boolean indicating if slot is open |
-| patient_to_attend | Patient ID if booked, empty if available |
-
-## For Students: How the Flow Works
-
-Understanding this system helps demonstrate several key AI engineering concepts:
-
-### 1. Intent Classification
-
-When a user sends a message, the Supervisor agent analyzes the text to determine what action the user wants. This is done using structured output parsing, where the LLM returns a JSON object with:
-- `intent`: The type of request (get_info, book, cancel, reschedule, end)
-- `next_agent`: Which specialized agent should handle it
-- `reasoning`: Explanation of the decision
-
-### 2. Tool Use in Agents
-
-Each specialized agent has access to specific tools. For example, the Info Agent can query available slots, but cannot book appointments. This demonstrates the principle of least privilege in agent design.
-
-### 3. State Management
-
-LangGraph maintains conversation state across all agents. The state includes:
-- Message history (for context)
-- Current intent and routing decision
-- Parameters collected during booking (patient_id, doctor, date)
-- Tool execution results
-- Final responses
-
-### 4. Conditional Routing
-
-The graph uses conditional edges to determine flow:
-- After supervisor: Route based on classified intent
-- After agent: Continue to tools if needed, or end if response is complete
-
-### 5. Data Layer Abstraction
-
-Tools provide an abstraction layer over the CSV data, making it easy to:
-- Change the data source (e.g., to a database)
-- Add validation
-- Modify query logic without changing agent code
-
-## Configuration
-
-Environment variables can be set in `.env`:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| XAI_API_KEY | Your xAI API key | Required |
-| MODEL_NAME | LLM model to use | grok-4 |
-| TEMPERATURE | LLM creativity (0=deterministic) | 0 |
-
-## License
-
-This project is provided for educational purposes.
+## Tech stack
+LangGraph · LangChain · Claude (Anthropic) · PostgreSQL · psycopg 3 · python-dotenv
