@@ -1,0 +1,5 @@
+langgraph>=1.2
+langchain-core>=1.8
+langchain-anthropic>=1.7
+psycopg[binary]>=3.3
+python-dotenv>=1.0
